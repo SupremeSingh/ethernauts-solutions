@@ -628,16 +628,20 @@ First copy your  `runtime opcodes`  into memory. Add a placeholder for  `f`(curr
 
 4. Then,  `return`  your in-memory  `runtime opcodes`  to the EVM:
 
-    `600a    // s: push1 0x0a (runtime opcode length)  `
-    `6000    // p: push1 0x00 (access memory index 0)`  
-    `f3      // return to EVM`
+```
+    600a    // s: push1 0x0a (runtime opcode length) 
+    6000    // p: push1 0x00 (access memory index 0)  
+    f3      // return to EVM
+```
 
 5. Notice that in total, your  `initialization opcodes`  take up 12 bytes, or  `0x0c`  spaces. This means your  `runtime opcodes`  will start at index  `0x0c`, where  `f`  is now known to be  `0x0c`            
 
-    `600a    // s: push1 0x0a (10 bytes)`  
-    `60**0c**    // f: push1 0x?? ` \n
-    `6000    // t: push1 0x00 (destination memory index 0)  `
-    `39      // CODECOPY`
+```
+    600a    // s: push1 0x0a (10 bytes)  
+    60**0c**    // f: push1 0x?? 
+    6000    // t: push1 0x00 (destination memory index 0)  
+    39      // CODECOPY
+```
 
 6. The final sequence is thus:
 
