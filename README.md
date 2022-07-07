@@ -635,7 +635,7 @@ First copy your  `runtime opcodes`  into memory. Add a placeholder for  `f`(curr
 5. Notice that in total, your  `initialization opcodes`  take up 12 bytes, or  `0x0c`  spaces. This means your  `runtime opcodes`  will start at index  `0x0c`, where  `f`  is now known to be  `0x0c`            
 
     `600a    // s: push1 0x0a (10 bytes)`  
-    `60**0c**    // f: push1 0x?? `
+    `60**0c**    // f: push1 0x?? ` \n
     `6000    // t: push1 0x00 (destination memory index 0)  `
     `39      // CODECOPY`
 
