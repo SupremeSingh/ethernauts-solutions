@@ -2,7 +2,7 @@
 
 This is a series of solutions for the famous Ethernauts series by OpenZeppelin. Ethernauts is a great "capture-the-flag" style educational series designed to train Solidity developers in identifying and (hopefully avoiding) subtle vulnerabilities in contracts. 
 
-I highly recommend tracking all your transactions with Etherscan and Tenderly. PRs with more efficient solutions are welcome !!
+I highly recommend tracking all your transactions with Etherscan and Tenderly. Do read through how the [EVM](https://ethereum.org/en/developers/docs/evm/) works, how it [stores](https://programtheblockchain.com/posts/2018/03/09/understanding-ethereum-smart-contract-storage/) data, as well as these [quirks](https://swende.se/blog/Ethereum_quirks_and_vulns.html) of Ethereum as they might be useful heading on. PRs with more efficient solutions are welcome !!
 
 ## P1 - Fallback
 
@@ -459,6 +459,8 @@ What follows after is an algorithm that allows your contract to live at a specif
 
 So, we must notice that from steps 1 -3, there is no contract code available at the contract's address.  This is confirmed by calling `extcodesize(address)` and getting a value of 0 before step 4 is carried out.  
 
+![](https://miro.medium.com/max/1400/1*5Wrb7z3W6AMtjH6IKJYowg.jpeg)
+
  **Vulnerability** - Contract depends on other contract to be un-initialized to carry out entry. 
 
 
@@ -486,9 +488,9 @@ Step 2 -  To ensure the contract address still comes out with an exit code of 0 
 
 ## P15 - Naught Coin 
 
-And we're back to being easy. Naught Coin goes to re-iterate the point that you should nevvvveeer trust a contract that inherits from an interface, unless you are really familiar with the interface and know the inheritor has implemented it correctly. 
+And we're back to being easy. Naught Coin goes to re-iterate the point that you should never trust a contract that inherits from an interface, unless you are really familiar with the interface and know the inheritor has implemented it correctly. 
 
- **Vulnerability** -Naught Coin does not implement the transferFrom() and approve() functions in IERC20.
+ **Vulnerability** - Naught Coin does not implement the transferFrom() and approve() functions in IERC20.
 
  **Exploit** - 
 
@@ -501,3 +503,230 @@ Step 2 - `approve()` yourself and `transferFrom()` to another account.
 -  If you can, check for  [EIP 165 compliance](https://eips.ethereum.org/EIPS/eip-165), which confirms which interface an external contract is implementing. Conversely, if you are the one issuing tokens, remember to be EIP-165 compliant.
 
 Note - For a helpful tutorial on ERC 165 to implement in future contracts, please do take a look at [this](https://medium.com/@chiqing/ethereum-standard-erc165-explained-63b54ca0d273) article. 
+
+## P16 - Preservation
+
+Preservation's main point is to remind the player that a delegate call is context preserving. In plain terms, when you call something as a delegate - you are essentially copying that block of code into your contract to run. Any state changes that logic would have made at specific slots in its contract - it will now make in those exact same slots ion your contract. 
+
+In addition, this challenge brings up some interesting points about Solidity [Libraries](https://jeancvllr.medium.com/solidity-tutorial-all-about-libraries-762e5a3692f9#:~:text=A%20library%20in%20Solidity%20is,in%20a%20more%20modular%20way.) - and design shortcomings that must be kept in mind going forward. 
+ 
+ **Vulnerability** - Contract depends on a library which stores state. Moreover, the state variables are not in step with the library. 
+
+ **Exploit** - 
+
+Step 1 - Make a bogus contract and deploy to Rinkeby 
+Step 2 - Make first call to `setFirstTime()` but enter the `uint(address())` wrapped version of your contract's address.
+
+    web3.utils.hexToNumberString("<Your-Contract>")
+
+Step 3 - Once library 1's address corresponds to your malicious contract's address, make the call again to switch ownership. 
+
+    // SPDX-License-Identifier: MIT
+    pragma  solidity  ^0.8.7;
+    
+    contract PreservationAttack {
+   
+	    address  public timeZone1Library;
+	    address  public timeZone2Library;
+	    address  public owner;
+	    uint storedTime;
+	    
+	    function setFirstTime(uint _timeStamp)  public  {
+		    owner =  address(uint160(_timeStamp));
+	    }
+    
+    }
+
+**Learning** - 
+
+-  **Ideally, libraries should not store state.**
+-  When creating libraries, use  `library`, not  `contract`, to ensure libraries will not modify caller storage data when caller uses  `delegatecall`.
+
+## P17 - Recovery
+
+It is common to lose contract addresses once deployed. However, if you still have the tx receipt or any other piece of information - you can still retrace your steps and figure out what the address of the lost contract was. 
+
+There are two ways to "recover" the address of s a smart contract once lost - 
+
+**Calculating it** 
+
+    The address of the new account is defined as being the rightmost 160 
+    bits of the Keccak hash of the RLP encoding of the structure
+    containing only the sender and the account nonce. Thus we define the 
+    resultant address for the new account `a ≡ B96..255 KEC RLP 
+    (s, σ[s]n − 1) `
+
+What the Ethereum yellow paper is saying here is that contract addresses are deterministically calculated as per input information. 
+
+In pseudo-code, we might say - 
+
+    address = rightmost_20_bytes(keccak(RLP(sender address, nonce)))
+where 
+-   `sender address`: is the contract or wallet address that created this new contract
+-   `nonce`: is the number of transactions sent from the  `sender address`  in total OR,  if the sender is a factory contract, the `nonce` is the number of contract-creations made by this account.
+
+Note - in case of factory contract, transaction 0 is the contract creation itself. 
+
+**Getting from Etherscan** 
+
+My personal favorite, and easier method is to simply use a blockchain indexer like Etherscan to trace back the address of the contract from it's deployer's address - or in this case the address of your Ethernaut instance. 
+
+ **Vulnerability** - The contract's `selfdestruct()` method is not access-controlled. 
+
+ **Exploit** - 
+
+Step 1 - Enter instance address into Rinkeby Etherscan
+Step 2 - Determine, from contract creation events, the address of the token 
+Step 3 - Copy the token's code into Remix and recreate at same address 
+Step 4 - Call `selfdestruct()` with your wallet address.  
+
+**Learning** - 
+
+-  Always add access control to state-modifying functions if appropriate 
+- Ethereum contract creation has **Money laundering potential**: You can send Ethers to a deterministic address, but the contract there is currently nonexistent. These funds are effectively lost forever until you decide to create a contract at that address and regain ownership.
+-   **You are not anonymous on Ethereum**: Anyone can follow your current transaction traces, as well as monitor your future contract addresses. This transaction pattern can be used to derive your real world identity.
+
+## P18 - Magic Number 
+
+So the first part of this problem is figuring out the meaning of life ... huh. Well thank god it's all a piece of nerdo-babble and reliably of course, life in this case just means the number `0x42`. [Confused](https://www.independent.co.uk/life-style/history/42-the-answer-to-life-the-universe-and-everything-2205734.html) ?
+
+Now, for the real part - let's understand how the EVM actually deploys contract code on-chain. 
+
+![](https://miro.medium.com/max/1400/1*5Wrb7z3W6AMtjH6IKJYowg.jpeg)
+
+Note, that at the compilation level, the EVM breaks down your solidity compilation bytecode into two types of `opcodes` - 
+
+-   **Initialization opcodes**: to be run immediately by the EVM to create your contract and store your future runtime opcodes, and
+-   **Runtime opcodes**: to contain the actual execution logic you want. This is the main part of your code that should  return `0x42` and be under 10 opcodes.
+
+So, clearly, we need to first come up with the run-time opcodes to store the number `0x42` in a contract object, and then return it whenever someone interacts with our contract. Finally, we have to generate the initialization opcodes as well. 
+
+#### Runtime Opcodes
+
+First, store your  `0x42`  value in memory with  `mstore(p, v)`, where p is position and v is the value in hexadecimal:
+
+    6042    // v: push1 0x42 (value is 0x42)  
+    6080    // p: push1 0x80 (memory slot is 0x80)  
+    52      // mstore
+
+Then, you can  `return`  this the  `0x42`  value:
+
+    6020    // s: push1 0x20 (value is 32 bytes in size)  
+    6080    // p: push1 0x80 (value was stored in slot 0x80)  
+    f3      // return
+
+This resulting opcode sequence should be  `604260805260206080f3`. Your runtime opcode is exactly 10 items. 
+
+#### Initialization Opcodes
+
+First copy your  `runtime opcodes`  into memory. Add a placeholder for  `f`(current position of the runtime opcodes), as it is currently unknown:
+
+    600a    // s: push1 0x0a (10 bytes)  
+    60??    // f: push1 0x?? (current position of runtime codes)  
+    6000    // t: push1 0x00 (destination memory index 0)  
+    39      // CODECOPY
+
+4. Then,  `return`  your in-memory  `runtime opcodes`  to the EVM:
+
+    `600a    // s: push1 0x0a (runtime opcode length)  `
+    `6000    // p: push1 0x00 (access memory index 0)`  
+    `f3      // return to EVM`
+
+5. Notice that in total, your  `initialization opcodes`  take up 12 bytes, or  `0x0c`  spaces. This means your  `runtime opcodes`  will start at index  `0x0c`, where  `f`  is now known to be  `0x0c`            
+
+    `600a    // s: push1 0x0a (10 bytes)`  
+    `60**0c**    // f: push1 0x?? `
+    `6000    // t: push1 0x00 (destination memory index 0)  `
+    `39      // CODECOPY`
+
+6. The final sequence is thus:
+
+    `0x600a600c600039600a6000f3604260805260206080f3`
+
+Where the first 12 bytes are  `initialization opcodes`  and the subsequent 10 bytes are your  `runtime opcodes`.
+
+Finally, we deploy this contract as - 
+
+    web3.eth.sendTransaction({ from: account, data: bytecode }, 
+    function(err,res){console.log(res)});
+
+and feed the resulting contract address to `setSolver().`
+
+## P19 - Alien Codex
+
+To work through this example, it is important to understand how array storage works, and how function calls can be made to a contract with input data. For this, I would refer you back to the reading on EVM storage I had linked earlier. I also recommend understanding how to encode [data](https://docs.soliditylang.org/en/v0.8.13/abi-spec.html#examples) to make a contract call. 
+
+Since this contract is Ownable, it inherits the `_ownable` variable which is 20 Bytes, hence fitting into slot 0.  Now, we know that `contacted` is only 1 Byte, and is stored at slot 0.
+
+Then we note that the dynamic array of codexes is not stored at slot number 1. Just it's length is. The rest of the data items are stored in the hashes of the individual indices. Initially, the length of codex is 0. 
+
+**Vulnerability -** State variable located on the same storage continuum can fall victims of writing errors. 
+
+**Exploit** - 
+
+Step 1 - Initially, when nothing is stored in the `codex` array, we call `retract()`, which leads to an underflow error in memory and set's `codex`'s length to `2^256 - 1` - the entire storage continuum for this contract.   
+Step 2 - Given the entire storage to play with, we now analyze which slot each item sits in individually. I recommend confirming that the `bool` and the owner's address are actually stored in slot number 0. 
+
+    await web3.eth.getStorageAt(contract.address, 0, console.log)
+
+Step 3 - Now we know we have to modify the data in slot 0, but the closest method we have to modifying everything is `revise()`. And unfortunately, that only works on the codex array. 
+Step 4 - No worries, we will just perform another overflow. Refer to the following - 
+
+|Slot #  | Variable |
+|--|--|
+|0|contact bool(1 bytes] & owner address (20 bytes)|
+|1|codex.length|
+| keccak256(1)|codex[0]|
+| keccak256(1) + 1|codex[1]|
+| keccak256(1) + 2|codex[2]|
+| ...|--|
+| 2²⁵⁶ - 1|codex[(2²⁵⁶ - 1) - keccak256(1)]|
+| 0|codex[(2²⁵⁶ - 1) - keccak256(1) + 1]|
+
+If `codex[(2²⁵⁶ - 1) - keccak256(1) + 1]` confuses you, I spent 2 hours figuring it out myself. Basically, `(2²⁵⁶ - 1)`is the total number of slots possible in the contract's storage. Thanks to the underflow, we have access to all of them.
+
+Hypothetically, `(2²⁵⁶ - 1) - keccak256(1)` is the index of the element in codex, which is stored at the last slot in the contract's memory. By adding 1, we overrun the total memory and end up back around at slot 0. 
+
+This index value computes to be - 
+    
+    35707666377435648211887908874984608119992236509074197713628
+    505308453184860938
+
+so, we have to change the value of the codex array at this index, to be a bool set to true, and our address - 
+
+'0x000000000000000000000001' + '/*Your-address*/'
+
+Step 5 - Finally, we can call the revise() function and see your efforts lead to (hopefully) success. 
+
+    await contract.revise(index, newVal)
+
+
+**Learning** - 
+
+- Newer SolC versions take care of this, but you must always be aware of storage data collisions and overwrites.
+- Always include overflow and underflow checks in your code. 
+ 
+## P20 - Denial
+
+Remember how we covered the idea of safe-transfer. Basically, when you transfer eth to another contract, or call a function in it - your contract loses control of execution and has to depend on the other one to work. 
+
+Since this once has been explained already, do try here with the code and see if it makes sense. I will note, since the idea is to deny service even upto a million units of gas, an infinite loop might be a decent design choice.
+
+    // SPDX-License-Identifier: MIT
+    pragma  solidity  ^0.6.0;
+    
+    contract DenialAttack {
+    
+	    address victimContract;
+	    
+	    constructor(address _victimContractAddress)  public  {
+		    victimContract = _victimContractAddress;
+	    }  
+	    
+	    receive()  external  payable  {
+		    while(true)  {
+		    /*Infinite Loop*/
+		    }
+	    }
+    
+    }
