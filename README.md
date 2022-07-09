@@ -808,3 +808,28 @@ await contract.swap(b, a, 45);
 
 - Contracts that are required to have a reliable and accurate source of external data, should never rely only on one oracle source to obtain such data. 
 - Fragmented liquidity leads to high slippage and impermanent loss. 
+
+## P23 - DEX (Advanced)
+
+This biggest difference between this contract and the last one is the `require()` statement that checks which tokens are being swapped. Or even added for liquidity. 
+
+Pop question - what is the most worthless token you can have (hint - how about one you just make in Remix on a Testnet). Or perhaps Dogecoin. So let's make a bogus token using the following code, and add it to the pool. 
+
+    // SPDX-License-Identifier: MIT
+    pragma  solidity  ^0.8.0;
+    
+    import  { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+    
+    contract BogusToken is ERC20 {
+	    constructor(uint256 initialSupply) ERC20("Bogus",  "BGS")  {
+		    _mint(msg.sender, 200);
+	    }
+    
+    }
+
+Note - Since there are no checks, this "pool" can technically hold more than just two tokens. 
+
+Now, add 100 Bogus tokens in the pool and use the same steps as the last problem to retrieve all of token 1. Then, finally, add a 100 more bogus tokens and get all of token 2 out. Congratulations !! You have lost nothing (except for 2 mins for copying this code) and pulled out everything from the pool.   
+
+## P24 - Puzzle Wallet 
+
