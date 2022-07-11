@@ -833,3 +833,37 @@ Now, add 100 Bogus tokens in the pool and use the same steps as the last problem
 
 ## P24 - Puzzle Wallet 
 
+This challenge digs into the deep and murky world of upgradeable smart contract. Yes, I know blockchains are supposed to be immutable, the code is law blah blah blah. But companies need to be able to fix and improve their code continuously, and upgradeable smart contracts are one of the cheaper and faster ways of doing so. 
+
+OpenZeppelin has some recommended [architectures](https://blog.openzeppelin.com/proxy-patterns/) you can follow for this. TL;DR - 
+
+```
+A "proxy pattern" allows developers to place a smart 
+contract between their users and the smart contracts which 
+actually contain their business logic. This intermediatery 
+contract acts as a switchboard between the user's function 
+calls and the contracts in the "back-end" by mapping 
+funtions to contract address. It also stores the state 
+information from these calls locally. 
+
+In case a contract needs to be upgraded, the developer can 
+simply change the address pointing to it's functon set in 
+the Proxy's mapping. 
+```
+**Vulnerability** - This contract does not follow any of the recommended architectures of OZ, and is open to malicious state modification. 
+
+**Exploit** - 
+
+Step 1 - Remember that this code takes on a shoddy likeness of the `Inherited Storage` pattern. The `UpgradeableProxy` contract and the logic share storage in this architecture, and functions are forwarded via delegated calls. 
+
+Step 2 - Clearly, because no preventative measures are taken - we can tell that the following slots share state variables over here 
+
+|Slot #| Variable Names |
+|--|--|
+| 0 | owner <-> pendingAdmin |
+| 1 | maxBalance <-> admin |
+
+
+Step 3 - So firstly, we want to become pendingAdmin, and we will automatically become owners. That is simple. 
+
+Step 4 - Then to become admins, we have to change `maxBalance()`.
